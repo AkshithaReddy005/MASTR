@@ -1,0 +1,32 @@
+# MASTR: Multi-Agent Soft Time Routing
+# Core dependencies for RL-based MVRPSTW solver
+
+# Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Reinforcement Learning
+gymnasium>=0.29.0
+stable-baselines3>=2.1.0
+
+# Data Processing
+numpy>=1.24.0
+pandas>=2.0.0
+kagglehub>=0.2.0
+
+# Optimization Baseline
+ortools>=9.7.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.14.0
+
+# Utilities
+tqdm>=4.65.0
+tensorboard>=2.13.0
+scipy>=1.10.0
+
+# Development
+jupyter>=1.0.0
+ipykernel>=6.23.0
