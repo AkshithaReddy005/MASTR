@@ -21,12 +21,17 @@ def main():
     
     # 1. Create Environment
     print("\n[1/5] Creating environment...")
+    
+    # Path to Kaggle dataset (if available)
+    data_path = "data/raw/VRP.csv"
+    
     env = MVRPSTWEnv(
         num_customers=10,  # Smaller for faster demo
         num_vehicles=2,
         vehicle_capacity=100.0,
         grid_size=100.0,
-        seed=42
+        seed=42,
+        data_path=data_path  # Use real data if file exists
     )
     print(f"✓ Environment created: {env.num_customers} customers, {env.num_vehicles} vehicles")
     

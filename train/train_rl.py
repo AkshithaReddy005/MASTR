@@ -223,7 +223,7 @@ class REINFORCETrainer:
             'avg_cost': -avg_reward
         }
     
-    def train(self, num_iterations: int = 1000, episodes_per_iter: int = 32, eval_interval: int = 50):
+    def train(self, num_iterations: int = 100, episodes_per_iter: int = 32, eval_interval: int = 50):
         """
         Main training loop
         """
@@ -309,12 +309,16 @@ def main():
     num_heads = 8
     num_encoder_layers = 3
     
+    # Path to Kaggle dataset (if available)
+    data_path = "data/raw/VRP.csv"
+    
     # Create environment
     env = MVRPSTWEnv(
         num_customers=num_customers,
         num_vehicles=num_vehicles,
         vehicle_capacity=100.0,
-        grid_size=100.0
+        grid_size=100.0,
+        data_path=data_path  # Use real data if file exists
     )
     
     # Create model
@@ -338,7 +342,7 @@ def main():
     
     # Train
     trainer.train(
-        num_iterations=1000,
+        num_iterations=10,
         episodes_per_iter=32,
         eval_interval=50
     )

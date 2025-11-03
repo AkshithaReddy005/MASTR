@@ -9,6 +9,8 @@ import numpy as np
 from gymnasium import spaces
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional, Any, Union
+import pandas as pd
+import os
 
 class MVRPSTWEnv(gym.Env):
     """
@@ -20,7 +22,8 @@ class MVRPSTWEnv(gym.Env):
     def __init__(self, num_customers: int = 20, num_vehicles: int = 3, 
                  vehicle_capacity: float = 100.0, grid_size: float = 100.0,
                  max_time: float = 480.0, penalty_early: float = 1.0,
-                 penalty_late: float = 2.0, seed: Optional[int] = None):
+                 penalty_late: float = 2.0, seed: Optional[int] = None,
+                 data_path: Optional[str] = None):
         """
         Initialize the MVRPSTW environment.
         
@@ -33,6 +36,7 @@ class MVRPSTWEnv(gym.Env):
             penalty_early: Penalty multiplier for early arrival
             penalty_late: Penalty multiplier for late arrival
             seed: Random seed for reproducibility
+            data_path: Path to CSV file with real data (optional)
         """
         super(MVRPSTWEnv, self).__init__()
         
@@ -45,6 +49,8 @@ class MVRPSTWEnv(gym.Env):
         self.penalty_early = penalty_early
         self.penalty_late = penalty_late
         self.seed = seed
+        self.data_path = data_path
+        self.use_real_data = data_path is not None and os.path.exists(data_path)
         
         # Set random seed
         if seed is not None:
@@ -79,6 +85,98 @@ class MVRPSTWEnv(gym.Env):
             shape=(obs_size,),
             dtype=np.float32
         )
+    
+    def _load_data_from_csv(self):
+        """Load customer data from CSV file (robust to schema differences)."""
+        try:
+            # Try to auto-detect separator and normalize columns
+            df = pd.read_csv(self.data_path, sep=None, engine='python')
+
+            # Normalize column names: strip, upper, replace spaces and hyphens
+            norm_cols = {
+                c: c.strip().upper().replace(' ', '_').replace('-', '_').replace('.', '')
+                for c in df.columns
+            }
+            df.rename(columns=norm_cols, inplace=True)
+
+            def pick_col(aliases: List[str]) -> str:
+                for a in aliases:
+                    if a in df.columns:
+                        return a
+                return None
+
+            # Column aliases seen in VRP datasets
+            col_x = pick_col(['XCOORD', 'X', 'X_COORD', 'XCOORDINATE'])
+            col_y = pick_col(['YCOORD', 'Y', 'Y_COORD', 'YCOORDINATE'])
+            col_dem = pick_col(['DEMAND', 'QTY', 'DEMANDS'])
+            col_ready = pick_col(['READY_TIME', 'READYTIME', 'READY', 'START_TIME', 'EARLIEST'])
+            col_due = pick_col(['DUE_DATE', 'DUEDATE', 'DUE', 'END_TIME', 'LATEST'])
+            col_service = pick_col(['SERVICE_TIME', 'SERVICETIME', 'SERVICE'])
+            col_cust = pick_col(['CUST_NO', 'CUSTNO', 'CUSTOMER', 'ID', 'NODE'])
+
+            required = [col_x, col_y]
+            if any(c is None for c in required):
+                raise ValueError(f"Missing X/Y coordinate columns. Found columns: {list(df.columns)}")
+
+            # Identify depot row: prefer customer id 0, otherwise min demand, otherwise first row
+            depot_idx = None
+            if col_cust is not None and df[col_cust].dtype != object:
+                try:
+                    depot_idx = int(df[col_cust].astype(int).eq(0).idxmax()) if (df[col_cust].astype(int) == 0).any() else None
+                except Exception:
+                    depot_idx = None
+            if depot_idx is None and col_dem is not None:
+                try:
+                    depot_idx = int(df[col_dem].astype(float).idxmin())
+                except Exception:
+                    depot_idx = None
+            if depot_idx is None:
+                depot_idx = 0
+
+            # Depot location
+            depot_row = df.iloc[depot_idx]
+            self.depot_loc = np.array([float(depot_row[col_x]), float(depot_row[col_y])], dtype=np.float32)
+
+            # Customer rows: all except depot_idx
+            customer_df = df.drop(index=depot_idx).reset_index(drop=True)
+
+            # If dataset has fewer rows than requested, reduce num_customers
+            available = len(customer_df)
+            if available == 0:
+                raise ValueError("CSV contains no customer rows after removing depot")
+            if available < self.num_customers:
+                self.num_customers = available
+
+            # Take first N customers
+            customer_df = customer_df.iloc[:self.num_customers]
+
+            # Locations (required)
+            self.customer_locations = customer_df[[col_x, col_y]].astype(float).values.astype(np.float32)
+
+            # Demand: default to 0 if missing
+            if col_dem is not None:
+                self.demands = customer_df[col_dem].astype(float).values.astype(np.float32)
+            else:
+                self.demands = np.zeros(self.num_customers, dtype=np.float32)
+
+            # Time windows: if missing, create wide windows
+            if col_ready is not None and col_due is not None:
+                ready_times = customer_df[col_ready].astype(float).values.astype(np.float32)
+                due_dates = customer_df[col_due].astype(float).values.astype(np.float32)
+                # Fix any inverted windows
+                due_dates = np.maximum(due_dates, ready_times + 1.0)
+            else:
+                ready_times = np.zeros(self.num_customers, dtype=np.float32)
+                due_dates = np.full(self.num_customers, self.max_time, dtype=np.float32)
+            self.time_windows = np.column_stack([ready_times, due_dates]).astype(np.float32)
+
+            print(f"✓ Loaded real data from {self.data_path}")
+            print(f"  - {len(self.customer_locations)} customers")
+            print(f"  - Depot at: {self.depot_loc}")
+
+        except Exception as e:
+            print(f"⚠ Warning: Could not load CSV ({e}). Using random data instead.")
+            self.use_real_data = False
         
     def reset(self, seed: Optional[int] = None) -> Tuple[np.ndarray, Dict]:
         """Reset the environment to initial state."""
@@ -86,21 +184,25 @@ class MVRPSTWEnv(gym.Env):
             np.random.seed(seed)
         elif self.seed is not None:
             np.random.seed(self.seed)
-            
-        # Generate random customer locations and demands
-        self.customer_locations = np.random.uniform(
-            0, self.grid_size, 
-            size=(self.num_customers, 2)
-        )
-        self.demands = np.random.uniform(
-            5, 25, 
-            size=self.num_customers
-        )
         
-        # Generate time windows (start_time, end_time) for each customer
-        time_starts = np.random.uniform(0, self.max_time * 0.6, size=self.num_customers)
-        time_durations = np.random.uniform(60, 120, size=self.num_customers)
-        self.time_windows = np.column_stack([time_starts, time_starts + time_durations])
+        # Load data from CSV if available, otherwise generate random data
+        if self.use_real_data:
+            self._load_data_from_csv()
+        else:
+            # Generate random customer locations and demands
+            self.customer_locations = np.random.uniform(
+                0, self.grid_size, 
+                size=(self.num_customers, 2)
+            )
+            self.demands = np.random.uniform(
+                5, 25, 
+                size=self.num_customers
+            )
+            
+            # Generate time windows (start_time, end_time) for each customer
+            time_starts = np.random.uniform(0, self.max_time * 0.6, size=self.num_customers)
+            time_durations = np.random.uniform(60, 120, size=self.num_customers)
+            self.time_windows = np.column_stack([time_starts, time_starts + time_durations])
         
         # Initialize vehicle states [x, y, capacity_remaining, current_time]
         self.vehicle_states = np.zeros((self.num_vehicles, 4))
