@@ -22,8 +22,8 @@ def main():
     # 1. Create Environment
     print("\n[1/5] Creating environment...")
     env = MVRPSTWEnv(
-        num_customers=20,
-        num_vehicles=3,
+        num_customers=10,  # Smaller for faster demo
+        num_vehicles=2,
         vehicle_capacity=100.0,
         grid_size=100.0,
         seed=42
@@ -34,10 +34,10 @@ def main():
     print("\n[2/5] Creating MAAM model...")
     model = MAAM(
         input_dim=8,
-        embed_dim=128,
-        num_heads=8,
-        num_encoder_layers=3,
-        ff_dim=512,
+        embed_dim=64,  # Smaller for faster demo
+        num_heads=4,
+        num_encoder_layers=2,
+        ff_dim=256,
         dropout=0.1
     )
     num_params = sum(p.numel() for p in model.parameters())
@@ -55,12 +55,12 @@ def main():
     print(f"✓ Trainer initialized on device: {trainer.device}")
     
     # 4. Train Model (small demo)
-    print("\n[4/5] Training model (demo with 100 iterations)...")
+    print("\n[4/5] Training model (demo with 20 iterations)...")
     print("     For full training, use train_rl.py with 1000+ iterations")
     trainer.train(
-        num_iterations=100,
-        episodes_per_iter=16,
-        eval_interval=20
+        num_iterations=20,
+        episodes_per_iter=8,
+        eval_interval=5
     )
     print("✓ Training complete!")
     

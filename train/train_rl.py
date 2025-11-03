@@ -42,12 +42,14 @@ class REINFORCETrainer:
         self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
         
         # Baseline (value function) for variance reduction
+        # Use model's embedding dimension dynamically
+        embed_dim = model.embed_dim
         self.baseline = nn.Sequential(
-            nn.Linear(128, 256),
+            nn.Linear(embed_dim, embed_dim * 2),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(embed_dim * 2, embed_dim),
             nn.ReLU(),
-            nn.Linear(128, 1)
+            nn.Linear(embed_dim, 1)
         ).to(device)
         self.baseline_optimizer = optim.Adam(self.baseline.parameters(), lr=baseline_lr)
         
@@ -79,13 +81,12 @@ class REINFORCETrainer:
             mask = self._get_mask(obs)
             
             # Sample action
-            with torch.no_grad():
-                action, log_prob = self.model.sample_action(
-                    customer_features,
-                    vehicle_state,
-                    mask,
-                    greedy=greedy
-                )
+            action, log_prob = self.model.sample_action(
+                customer_features,
+                vehicle_state,
+                mask,
+                greedy=greedy
+            )
             
             action_np = action.item()
             
@@ -107,10 +108,11 @@ class REINFORCETrainer:
         num_customers = self.env.num_customers
         num_vehicles = self.env.num_vehicles
         
-        # Extract customer features (including depot)
+        # Skip depot (first 8 features), extract only customer features
+        customer_start_idx = 8
         customer_end_idx = 8 + num_customers * 8
-        customer_flat = obs[:customer_end_idx]
-        customer_features = customer_flat.reshape(num_customers + 1, 8)
+        customer_flat = obs[customer_start_idx:customer_end_idx]
+        customer_features = customer_flat.reshape(num_customers, 8)
         
         # Extract current vehicle state
         vehicle_start_idx = customer_end_idx
@@ -125,17 +127,20 @@ class REINFORCETrainer:
         return customer_features, vehicle_state
     
     def _get_mask(self, obs):
-        """Create mask for visited customers"""
+        """Create mask for visited customers (True = mask out, False = available)"""
         num_customers = self.env.num_customers
         
-        # Extract visited flags from observation
+        # Extract visited flags from customer features only (skip depot at index 0)
         visited = []
-        for i in range(num_customers + 1):
-            start_idx = i * 8
+        for i in range(num_customers):
+            # Customer i is at position: depot(8) + i*8
+            start_idx = 8 + i * 8
             visited_flag = obs[start_idx + 7]  # Last feature is visited flag
-            visited.append(visited_flag > 0.5)
-        
-        mask = torch.BoolTensor(visited).unsqueeze(0).to(self.device)
+            # Cast to Python bool to avoid numpy.bool_ deprecation
+            visited.append(bool(visited_flag > 0.5))
+
+        # Convert to tensor: True = visited (mask out), False = available
+        mask = torch.tensor(visited, dtype=torch.bool, device=self.device).unsqueeze(0)
         return mask
     
     def compute_returns(self, rewards):
@@ -162,17 +167,16 @@ class REINFORCETrainer:
             total_reward, log_probs, states, rewards = self.rollout(greedy=False)
             returns = self.compute_returns(rewards)
             
-            # Compute baselines
+            # Compute baselines (need gradients for baseline loss)
             baselines = []
             for customer_features, vehicle_state in states:
                 # Use encoder output as state representation
-                with torch.no_grad():
-                    _, encoder_output = self.model(customer_features, vehicle_state)
-                    state_repr = encoder_output.mean(dim=1)  # [B, embed_dim]
-                    baseline_value = self.baseline(state_repr).squeeze(-1)
-                    baselines.append(baseline_value)
+                _, encoder_output = self.model(customer_features, vehicle_state)
+                state_repr = encoder_output.mean(dim=1)  # [B, embed_dim]
+                baseline_value = self.baseline(state_repr)  # [B, 1]
+                baselines.append(baseline_value.squeeze(-1))  # [B]
             
-            baselines = torch.stack(baselines)
+            baselines = torch.stack(baselines)  # [num_steps]
             
             all_log_probs.extend(log_probs)
             all_returns.append(returns)
@@ -193,21 +197,21 @@ class REINFORCETrainer:
         advantages = normalized_returns - all_baselines.detach()
         
         # Policy loss (REINFORCE)
-        policy_loss = -(all_log_probs * advantages).mean()
+        policy_loss = -(all_log_probs * advantages.detach()).mean()
         
         # Baseline loss
         baseline_loss = nn.MSELoss()(all_baselines, all_returns)
+        
+        # Update baseline first (to avoid in-place operation issues)
+        self.baseline_optimizer.zero_grad()
+        baseline_loss.backward(retain_graph=True)
+        self.baseline_optimizer.step()
         
         # Update policy
         self.optimizer.zero_grad()
         policy_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
-        
-        # Update baseline
-        self.baseline_optimizer.zero_grad()
-        baseline_loss.backward()
-        self.baseline_optimizer.step()
         
         # Metrics
         avg_reward = np.mean(episode_rewards)
