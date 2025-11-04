@@ -51,6 +51,7 @@ class MVRPSTWEnv(gym.Env):
         self.seed = seed
         self.data_path = data_path
         self.use_real_data = data_path is not None and os.path.exists(data_path)
+        self._data_loaded = False  # Avoid reloading/printing each reset
         
         # Set random seed
         if seed is not None:
@@ -185,9 +186,11 @@ class MVRPSTWEnv(gym.Env):
         elif self.seed is not None:
             np.random.seed(self.seed)
         
-        # Load data from CSV if available, otherwise generate random data
+        # Load data from CSV if available (only once), otherwise generate random data
         if self.use_real_data:
-            self._load_data_from_csv()
+            if not self._data_loaded:
+                self._load_data_from_csv()
+                self._data_loaded = True
         else:
             # Generate random customer locations and demands
             self.customer_locations = np.random.uniform(
@@ -218,7 +221,10 @@ class MVRPSTWEnv(gym.Env):
         self.current_vehicle = 0
         # Safety: step counter to avoid endless episodes
         self._steps = 0
-        self._max_steps = max(50, self.num_customers * self.num_vehicles * 5)
+        # Limit steps to keep episodes fast on large instances
+        # Previously: num_customers * num_vehicles * 5 (e.g., 5000 for 100x10)
+        # Fast mode: reduce factor to 2
+        self._max_steps = max(200, self.num_customers * self.num_vehicles * 2)
         
         return self._get_obs(), {}
     

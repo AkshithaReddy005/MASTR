@@ -4,6 +4,7 @@ Uses REINFORCE algorithm with baseline
 """
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
@@ -38,11 +39,14 @@ class REINFORCETrainer:
         self.device = device
         self.gamma = gamma
         
+        # Initialize tracking variables
+        self.episode_counter = 0
+        self.best_reward = -float('inf')
+        
         # Optimizer
         self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
         
         # Baseline (value function) for variance reduction
-        # Use model's embedding dimension dynamically
         embed_dim = model.embed_dim
         self.baseline = nn.Sequential(
             nn.Linear(embed_dim, embed_dim * 2),
@@ -54,7 +58,9 @@ class REINFORCETrainer:
         self.baseline_optimizer = optim.Adam(self.baseline.parameters(), lr=baseline_lr)
         
         # Logging
-        self.writer = SummaryWriter('runs/maam_training')
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'runs/maam_training')
+        os.makedirs(log_dir, exist_ok=True)
+        self.writer = SummaryWriter(log_dir)
     
     def rollout(self, greedy: bool = False):
         """
@@ -143,78 +149,128 @@ class REINFORCETrainer:
         mask = torch.tensor(visited, dtype=torch.bool, device=self.device).unsqueeze(0)
         return mask
     
-    def compute_returns(self, rewards):
+    def compute_returns(self, rewards, gamma=0.99):
         """Compute discounted returns"""
         returns = []
-        G = 0
+        R = 0
+        if not isinstance(rewards, list):
+            rewards = [rewards] if not isinstance(rewards, (list, tuple)) else rewards
+            
         for r in reversed(rewards):
-            G = r + self.gamma * G
-            returns.insert(0, G)
-        returns = torch.FloatTensor(returns).to(self.device)
-        return returns
+            if not isinstance(r, (int, float)):
+                r = r.item() if hasattr(r, 'item') else float(r)
+            R = r + gamma * R
+            returns.insert(0, R)
+            
+        returns_tensor = torch.tensor(returns, dtype=torch.float32, device=self.device)
+        return returns_tensor.unsqueeze(-1) if len(returns_tensor.shape) == 1 else returns_tensor
     
     def train_step(self, num_episodes: int = 32):
         """
         Perform one training step with multiple episodes
         """
+        self.model.train()
+        
+        # Collect data with current policy
         all_log_probs = []
         all_returns = []
-        all_baselines = []
+        all_states = []
         episode_rewards = []
         
-        # Collect episodes
+        # Phase 1: Collect rollouts
         for _ in range(num_episodes):
-            total_reward, log_probs, states, rewards = self.rollout(greedy=False)
-            returns = self.compute_returns(rewards)
-            
-            # Compute baselines (need gradients for baseline loss)
-            baselines = []
-            for customer_features, vehicle_state in states:
-                # Use encoder output as state representation
-                _, encoder_output = self.model(customer_features, vehicle_state)
-                state_repr = encoder_output.mean(dim=1)  # [B, embed_dim]
-                baseline_value = self.baseline(state_repr)  # [B, 1]
-                baselines.append(baseline_value.squeeze(-1))  # [B]
-            
-            baselines = torch.stack(baselines)  # [num_steps]
-            
-            all_log_probs.extend(log_probs)
-            all_returns.append(returns)
-            all_baselines.append(baselines)
+            # Collect episode
+            total_reward, log_probs, states, rewards = self.rollout()
             episode_rewards.append(total_reward)
+            
+            # Store data
+            all_log_probs.extend(log_probs)
+            all_states.extend(states)
+            
+            # Compute and store returns
+            returns = self.compute_returns(rewards)
+            all_returns.append(returns)
         
-        # Concatenate all episodes
-        all_log_probs = torch.cat(all_log_probs)
-        all_returns = torch.cat(all_returns)
-        all_baselines = torch.cat(all_baselines)
+        # Convert to tensors
+        all_log_probs = torch.stack(all_log_probs) if all_log_probs else torch.tensor([], device=self.device)
+        all_returns = torch.cat(all_returns) if all_returns else torch.tensor([], device=self.device)
+        
+        # Phase 2: Compute baselines (no gradients)
+        with torch.no_grad():
+            baselines = []
+            for customer_features, vehicle_state in all_states:
+                customer_tensor = customer_features  # already a tensor on device
+                vehicle_tensor = vehicle_state       # already a tensor on device
+                
+                # Forward pass through model (no gradients)
+                _, encoder_output = self.model(customer_tensor, vehicle_tensor)
+                state_repr = encoder_output.mean(dim=1)
+                baseline_value = self.baseline(state_repr)
+                baselines.append(baseline_value.squeeze(-1))
+            
+            baselines = torch.cat(baselines) if baselines else torch.zeros_like(all_returns)
+        
+        # Ensure shapes match
+        if len(baselines.shape) > 1:
+            baselines = baselines.squeeze(-1)
+        if len(all_returns.shape) > 1:
+            all_returns = all_returns.squeeze(-1)
         
         # Normalize returns
-        returns_mean = all_returns.mean()
-        returns_std = all_returns.std() + 1e-8
-        normalized_returns = (all_returns - returns_mean) / returns_std
+        if len(all_returns) > 1:
+            returns_mean = all_returns.mean()
+            returns_std = all_returns.std() + 1e-8
+            normalized_returns = (all_returns - returns_mean) / returns_std
+        else:
+            normalized_returns = all_returns
         
         # Compute advantages
-        advantages = normalized_returns - all_baselines.detach()
+        advantages = normalized_returns - baselines.detach()
         
-        # Policy loss (REINFORCE)
-        policy_loss = -(all_log_probs * advantages.detach()).mean()
-        
-        # Baseline loss
-        baseline_loss = nn.MSELoss()(all_baselines, all_returns)
-        
-        # Update baseline first (to avoid in-place operation issues)
-        self.baseline_optimizer.zero_grad()
-        baseline_loss.backward(retain_graph=True)
-        self.baseline_optimizer.step()
-        
-        # Update policy
+        # Phase 3: Update policy
         self.optimizer.zero_grad()
+        policy_loss = -(all_log_probs * advantages).mean()
         policy_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
         
-        # Metrics
-        avg_reward = np.mean(episode_rewards)
+        # Phase 4: Update baseline
+        self.baseline_optimizer.zero_grad()
+        
+        # Recompute baselines with updated policy (with gradients)
+        baseline_preds = []
+        for customer_features, vehicle_state in all_states:
+            customer_tensor = customer_features  # already a tensor on device
+            vehicle_tensor = vehicle_state       # already a tensor on device
+            
+            with torch.no_grad():
+                _, encoder_output = self.model(customer_tensor, vehicle_tensor)
+                state_repr = encoder_output.mean(dim=1)
+            
+            baseline_pred = self.baseline(state_repr).squeeze(-1)
+            baseline_preds.append(baseline_pred)
+        
+        baseline_preds = torch.cat(baseline_preds) if baseline_preds else torch.tensor([], device=self.device)
+        baseline_loss = F.mse_loss(baseline_preds, normalized_returns.detach())
+        baseline_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.baseline.parameters(), max_norm=1.0)
+        self.baseline_optimizer.step()
+        
+        # Calculate average reward
+        avg_reward = np.mean(episode_rewards) if episode_rewards else 0
+        
+        # Update best model
+        if avg_reward > self.best_reward:
+            self.best_reward = avg_reward
+            self.save_checkpoint('best_model.pt')
+        
+        # Print progress
+        print(f"Episode: {self.episode_counter}")
+        print(f"  Avg Reward: {avg_reward:.2f}")
+        print(f"  Policy Loss: {policy_loss.item():.4f}")
+        print(f"  Baseline Loss: {baseline_loss.item():.4f}")
+        
+        self.episode_counter += 1
         
         return {
             'policy_loss': policy_loss.item(),
@@ -222,6 +278,65 @@ class REINFORCETrainer:
             'avg_reward': avg_reward,
             'avg_cost': -avg_reward
         }
+    
+    def update_policy(self, log_probs, rewards, states):
+        # Ensure log_probs is a tensor
+        if not isinstance(log_probs, torch.Tensor):
+            log_probs = torch.stack(log_probs)
+        
+        # Compute returns
+        returns = self.compute_returns(rewards)
+        
+        # Compute baselines (need gradients for baseline loss)
+        baselines = []
+        for customer_features, vehicle_state in states:
+            # Ensure tensors are on correct device
+            customer_features = torch.FloatTensor(customer_features).to(self.device)
+            vehicle_state = torch.FloatTensor(vehicle_state).to(self.device)
+            
+            # Use encoder output as state representation
+            with torch.no_grad():
+                # Make sure to detach the computation graph
+                customer_features = customer_features.detach()
+                vehicle_state = vehicle_state.detach()
+                
+                # Forward pass through model
+                _, encoder_output = self.model(customer_features, vehicle_state)
+                state_repr = encoder_output.mean(dim=1)  # [B, embed_dim]
+                
+                # Forward through baseline network
+                with torch.no_grad():
+                    baseline_value = self.baseline(state_repr)  # [B, 1]
+                baselines.append(baseline_value.squeeze(-1))  # [B]
+        
+        baselines = torch.cat(baselines) if baselines else torch.zeros_like(returns)
+        
+        # Ensure shapes match
+        if len(baselines.shape) > 1:
+            baselines = baselines.squeeze(-1)
+        
+        # Normalize returns
+        returns_mean = returns.mean()
+        returns_std = returns.std() + 1e-8
+        normalized_returns = (returns - returns_mean) / returns_std
+        
+        # Compute advantages
+        advantages = normalized_returns - baselines.detach()
+        
+        # Ensure shapes match for multiplication
+        if len(advantages.shape) > 1:
+            advantages = advantages.squeeze(-1)
+        
+        # Policy loss (REINFORCE)
+        policy_loss = -(log_probs * advantages).mean()
+        
+        # Update policy
+        self.optimizer.zero_grad()
+        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        self.optimizer.step()
+        
+        return policy_loss.item()
     
     def train(self, num_iterations: int = 100, episodes_per_iter: int = 32, eval_interval: int = 50):
         """
@@ -244,7 +359,7 @@ class REINFORCETrainer:
             
             # Evaluation
             if (iteration + 1) % eval_interval == 0:
-                eval_metrics = self.evaluate(num_episodes=10)
+                eval_metrics = self.evaluate(num_episodes=3)
                 
                 self.writer.add_scalar('Cost/Eval', eval_metrics['avg_cost'], iteration)
                 self.writer.add_scalar('Cost/Best', eval_metrics['best_cost'], iteration)
@@ -258,7 +373,7 @@ class REINFORCETrainer:
                 if eval_metrics['avg_cost'] < best_cost:
                     best_cost = eval_metrics['avg_cost']
                     self.save_checkpoint('checkpoints/best_model.pt')
-                    print(f"  ✓ New best model saved!")
+                    print(f"  New best model saved!")
         
         self.writer.close()
         print("\nTraining complete!")
@@ -283,70 +398,140 @@ class REINFORCETrainer:
     
     def save_checkpoint(self, path: str):
         """Save model checkpoint"""
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Create checkpoints directory if it doesn't exist
+        checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        # Join with the provided filename
+        full_path = os.path.join(checkpoint_dir, os.path.basename(path))
+        
+        # Save the model
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'baseline_state_dict': self.baseline.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'baseline_optimizer_state_dict': self.baseline_optimizer.state_dict()
-        }, path)
+            'baseline_optimizer_state_dict': self.baseline_optimizer.state_dict(),
+        }, full_path)
+        
+        print(f"\nModel saved to {full_path}")
     
     def load_checkpoint(self, path: str):
         """Load model checkpoint"""
+        # If path is not absolute, assume it's in the checkpoints directory
+        if not os.path.isabs(path):
+            checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'checkpoints')
+            path = os.path.join(checkpoint_dir, os.path.basename(path))
+        
+        print(f"Loading model from {path}")
         checkpoint = torch.load(path, map_location=self.device)
+        
+        # Load model states
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.baseline.load_state_dict(checkpoint['baseline_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.baseline_optimizer.load_state_dict(checkpoint['baseline_optimizer_state_dict'])
+        
+        # Only load optimizer states if they exist in the checkpoint
+        if 'optimizer_state_dict' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'baseline_optimizer_state_dict' in checkpoint:
+            self.baseline_optimizer.load_state_dict(checkpoint['baseline_optimizer_state_dict'])
+            
+        print("Model loaded successfully")
 
 
 def main():
     """Main training function"""
-    # Hyperparameters
-    num_customers = 20
-    num_vehicles = 3
+    # Set random seeds for reproducibility
+    torch.manual_seed(42)
+    np.random.seed(42)
+    
+    # Training parameters (FAST MODE for 100 customers)
+    # Increase later for higher accuracy (e.g., 200-500 iters, 8-16 episodes)
+    num_iterations = 60     # Fast training
+    episodes_per_iter = 2   # Small batch per update
+    eval_interval = 10      # Evaluate every 10 iterations
     embed_dim = 128
     num_heads = 8
     num_encoder_layers = 3
     
-    # Path to Kaggle dataset (if available)
-    data_path = "data/raw/VRP.csv"
+    # Path to C101 dataset
+    data_path = os.path.join("data", "raw", "C101.csv")
     
-    # Create environment
-    env = MVRPSTWEnv(
-        num_customers=num_customers,
-        num_vehicles=num_vehicles,
-        vehicle_capacity=100.0,
-        grid_size=100.0,
-        data_path=data_path  # Use real data if file exists
-    )
+    # Ensure data path exists
+    if not os.path.exists(data_path):
+        print(f"Error: Data file not found at {data_path}")
+        print("Please ensure the C101.csv file is in the correct location.")
+        return
     
-    # Create model
-    model = MAAM(
-        input_dim=8,
-        embed_dim=embed_dim,
-        num_heads=num_heads,
-        num_encoder_layers=num_encoder_layers,
-        ff_dim=512,
-        dropout=0.1
-    )
+    print(f"Using data from: {data_path}")
     
-    # Create trainer
-    trainer = REINFORCETrainer(
-        model=model,
-        env=env,
-        learning_rate=1e-4,
-        baseline_lr=1e-3,
-        gamma=0.99
-    )
-    
-    # Train
-    trainer.train(
-        num_iterations=10,
-        episodes_per_iter=32,
-        eval_interval=50
-    )
+    try:
+        # Create environment with 100 customers from the CSV
+        env = MVRPSTWEnv(
+            num_customers=100,  # Use all customers
+            num_vehicles=10,    # More vehicles for larger instance
+            vehicle_capacity=200.0,
+            grid_size=100.0,
+            data_path=data_path,
+            max_time=1236.0,
+            penalty_early=1.0,
+            penalty_late=2.0
+        )
+        
+        # Create model
+        model = MAAM(
+            input_dim=8,  # 8 features per customer
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            num_encoder_layers=num_encoder_layers,
+            ff_dim=512,
+            dropout=0.1
+        )
+        
+        # Print model summary
+        total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Model initialized with {total_params:,} trainable parameters")
+        
+        # Create trainer
+        trainer = REINFORCETrainer(
+            model=model,
+            env=env,
+            learning_rate=1e-4,
+            baseline_lr=1e-3,
+            gamma=0.99
+        )
+        
+        # Create checkpoints directory
+        os.makedirs("checkpoints", exist_ok=True)
+        
+        # Train
+        print("\nStarting training...")
+        trainer.train(
+            num_iterations=num_iterations,
+            episodes_per_iter=episodes_per_iter,
+            eval_interval=eval_interval
+        )
+        
+    except Exception as e:
+        print(f"Error during training: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
-if __name__ == '__main__':
-    main()
+def visualize_training():
+    """Visualize training progress using TensorBoard"""
+    print("\nTo visualize training progress, run in a new terminal:")
+    print("tensorboard --logdir=runs/")
+    print("Then open http://localhost:6006 in your browser")
+
+if __name__ == "__main__":
+    try:
+        main()
+        visualize_training()
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Saving model...")
+        # Create a dummy trainer to save the model
+        try:
+            trainer.save_checkpoint('interrupted_model.pt')
+        except NameError:
+            print("Could not save model: trainer not initialized")
+        visualize_training()
