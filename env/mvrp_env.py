@@ -171,12 +171,12 @@ class MVRPSTWEnv(gym.Env):
                 due_dates = np.full(self.num_customers, self.max_time, dtype=np.float32)
             self.time_windows = np.column_stack([ready_times, due_dates]).astype(np.float32)
 
-            print(f"✓ Loaded real data from {self.data_path}")
+            print(f"[OK] Loaded real data from {self.data_path}")
             print(f"  - {len(self.customer_locations)} customers")
             print(f"  - Depot at: {self.depot_loc}")
 
         except Exception as e:
-            print(f"⚠ Warning: Could not load CSV ({e}). Using random data instead.")
+            print(f"[WARNING] Could not load CSV ({e}). Using random data instead.")
             self.use_real_data = False
         
     def reset(self, seed: Optional[int] = None) -> Tuple[np.ndarray, Dict]:
@@ -307,8 +307,16 @@ class MVRPSTWEnv(gym.Env):
         # Add to route
         self.routes[vehicle_idx].append(customer_idx)
         
-        # Calculate reward (negative of total cost: distance + penalty)
-        reward = -(distance + penalty)
+        # Calculate reward with normalization to prevent extreme values
+        # Scale distance by grid size and normalize penalty
+        distance_cost = distance / 100.0  # Normalize by typical grid size
+        penalty_cost = penalty / 1000.0   # Normalize large penalties
+        
+        # Combined cost with weighting
+        total_cost = distance_cost + penalty_cost
+        
+        # Reward is negative cost, scaled to reasonable range
+        reward = -total_cost
         
         # Check if all customers are served
         done = np.all(self.visited)

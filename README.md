@@ -1,12 +1,63 @@
-# MASTR: Multi-Agent Soft Time Routing
-
-**Deep Reinforcement Learning for Multi-Vehicle Routing with Soft Time Windows**
+# MASTR: Multi-Agent System for Transportation Routing
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
----
+A deep learning framework for solving Multi-Vehicle Routing Problems with Soft Time Windows (MVRPSTW) using Multi-Agent Attention Mechanisms (MAAM). This project implements a state-of-the-art Transformer-based model that learns to generate near-optimal routing solutions through reinforcement learning.
+
+## 🌟 Key Features
+
+- **Multi-Agent Attention Model (MAAM)**: Transformer-based architecture with pointer networks
+- **Soft Time Windows**: Handles time window constraints with penalty-based rewards
+- **Real Data Support**: Compatible with Solomon benchmark datasets (C101, RC101, etc.)
+- **Comprehensive Training**: Includes gradient clipping, learning rate scheduling, and early stopping
+- **TensorBoard Integration**: Real-time monitoring of training metrics
+- **Evaluation Tools**: Built-in scripts for model evaluation and comparison
+
+## 📋 Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Project Structure](#project-structure)
+- [Training](#training)
+- [Evaluation](#evaluation)
+- [Configuration](#configuration)
+- [Results](#results)
+- [Citation](#citation)
+
+## 🚀 Installation
+
+### Prerequisites
+
+- Python 3.10 or higher
+- PyTorch 2.0 or higher
+- CUDA (optional, for GPU acceleration)
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/MASTR.git
+cd MASTR
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Required Packages
+
+```
+torch>=2.0.0
+torchvision>=0.10.0
+gymnasium>=0.26.0
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.4.0
+tensorboard>=2.6.0
+stable-baselines3>=1.6.0
+tqdm>=4.62.0
+```
 
 ## 🎯 Overview
 
