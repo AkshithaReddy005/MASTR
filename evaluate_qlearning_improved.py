@@ -25,7 +25,7 @@ def convert_numpy(obj):
 def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_agent.pkl', 
                                  num_episodes=50):
     """
-    Evaluate the improved Q-learning agent
+    Evaluate the improved Q-learning agent with enhanced metrics
     
     Args:
         agent_path: Path to saved agent
@@ -35,12 +35,14 @@ def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_
     print("IMPROVED Q-LEARNING VRP EVALUATION")
     print("="*80)
     
-    # Create environment
+    # Create environment with parameters matching training
     env = MVRPSTWEnv(
-        num_customers=20,
-        num_vehicles=3,
-        vehicle_capacity=100.0,
-        data_path='data/raw/C101.csv'
+        num_customers=100,  # Match training configuration
+        num_vehicles=25,    # Match final training stage (100c/25v)
+        vehicle_capacity=200.0,  # Capacity from Solomon header
+        data_path='data/c101.txt',  # Use same instance family
+        penalty_early=0.3,   # Match training penalties
+        penalty_late=0.5
     )
     
     # Load agent
@@ -153,8 +155,11 @@ def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_
             episode_reward += reward
             episode_step += 1
             episode_distance += distance
-            if action < env.num_customers:  # Only count customer visits
-                customers_visited += 1
+            if action < env.num_customers:
+                # Count as served only if environment marked it visited
+                customers_data_after = next_obs[8:8+env.num_customers*8].reshape(env.num_customers, 8)
+                if customers_data_after[action, -1] > 0.5:
+                    customers_visited += 1
             
             # Move to next state
             obs = next_obs
