@@ -5,7 +5,9 @@
 *.csv
 *.h5
 *.hdf5
-
+# Add to .gitignore
+*.md
+!README.md
 # Logs and outputs
 checkpoints_*/
 evaluation_plots/
