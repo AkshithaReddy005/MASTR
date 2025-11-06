@@ -1,0 +1,23 @@
+Training Summary
+==================================================
+Total episodes: 101
+Best reward: -1.24
+Final epsilon: 0.6027
+Final alpha: 0.095074
+Q-table size: 64 states
+Total updates: 631
+
+
+Last 10 episodes:
+--------------------------------------------------
+Episode   Reward         Steps     Customers
+92        -4.29          7         7
+93        -4.36          5         5
+94        -3.90          6         6
+95        -3.65          8         8
+96        -4.80          6         6
+97        -4.00          8         8
+98        -3.21          8         8
+99        -2.07          4         4
+100       -2.50          6         6
+101       -8.49          7         7
