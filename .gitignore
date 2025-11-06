@@ -19,6 +19,25 @@ wheels/
 .installed.cfg
 *.egg
 
+# Data files
+*.npy
+*.pkl
+*.csv
+*.h5
+*.hdf5
+
+# Logs and outputs
+checkpoints_*/
+evaluation_plots/
+evaluation_reports/
+hyperparameter_results/
+
+# Plot outputs
+*.png
+*.jpg
+*.jpeg
+*.pdf
+
 
 # Jupyter Notebook
 .ipynb_checkpoints
