@@ -3,6 +3,7 @@ Evaluation Script for Improved Q-Learning VRP Agent
 """
 import os
 import json
+import argparse
 import numpy as np
 from datetime import datetime
 from env.mvrp_env import MVRPSTWEnv
@@ -22,8 +23,17 @@ def convert_numpy(obj):
         return [convert_numpy(x) for x in obj]
     return obj
 
-def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_agent.pkl', 
-                                 num_episodes=50):
+def evaluate_improved_qlearning(
+    agent_path='checkpoints_qlearning_improved/best_agent.pkl',
+    data_path='data/c101.txt',
+    num_customers=100,
+    num_vehicles=25,
+    vehicle_capacity=200.0,
+    penalty_early=0.3,
+    penalty_late=0.5,
+    num_episodes=50,
+    max_speed=5.0
+):
     """
     Evaluate the improved Q-learning agent with enhanced metrics
     
@@ -35,14 +45,15 @@ def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_
     print("IMPROVED Q-LEARNING VRP EVALUATION")
     print("="*80)
     
-    # Create environment with parameters matching training
+    # Create environment with CLI-configurable parameters
     env = MVRPSTWEnv(
-        num_customers=100,  # Match training configuration
-        num_vehicles=25,    # Match final training stage (100c/25v)
-        vehicle_capacity=200.0,  # Capacity from Solomon header
-        data_path='data/c101.txt',  # Use same instance family
-        penalty_early=0.3,   # Match training penalties
-        penalty_late=0.5
+        num_customers=num_customers,
+        num_vehicles=num_vehicles,
+        vehicle_capacity=vehicle_capacity,
+        data_path=data_path,
+        penalty_early=penalty_early,
+        penalty_late=penalty_late,
+        max_speed=max_speed
     )
     
     # Load agent
@@ -115,7 +126,8 @@ def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_
             
             # Get vehicle position before action
             vehicle_data = obs[8+env.num_customers*8:].reshape(env.num_vehicles, 4)
-            old_pos = vehicle_data[env.current_vehicle][:2]
+            vehicle_idx = env.current_vehicle
+            old_pos = vehicle_data[vehicle_idx][:2]
             
             # Take action
             next_obs, reward, terminated, truncated, _ = env.step(action)
@@ -123,31 +135,36 @@ def evaluate_improved_qlearning(agent_path='checkpoints_qlearning_improved/best_
             
             # Calculate distance traveled
             next_vehicle_data = next_obs[8+env.num_customers*8:].reshape(env.num_vehicles, 4)
-            new_pos = next_vehicle_data[env.current_vehicle][:2]
+            new_pos = next_vehicle_data[vehicle_idx][:2]
             distance = np.linalg.norm(new_pos - old_pos)
             
             # Track vehicle usage
-            vehicle_usage[env.current_vehicle] = 1
+            vehicle_usage[vehicle_idx] = 1
             
             # Track route for visualization
             if episode <= 3:
                 routes[env.current_vehicle].append(new_pos.copy())
             
-            # Check for violations
+            # Check for violations (only when the customer was actually served)
             if action < env.num_customers:
-                customers_data = next_obs[8:8+env.num_customers*8].reshape(env.num_customers, 8)
-                customer = customers_data[action]
-                
-                ready_time = customer[3]
-                due_date = customer[4]
-                arrival_time = next_vehicle_data[env.current_vehicle][3]
-                
-                if arrival_time < ready_time:
-                    early_count += 1
-                elif arrival_time > due_date:
-                    late_count += 1
-                
-                remaining_capacity = next_vehicle_data[env.current_vehicle][2]
+                customers_data_after = next_obs[8:8+env.num_customers*8].reshape(env.num_customers, 8)
+                served = customers_data_after[action, -1] > 0.5
+                if served:
+                    ready_time = customers_data_after[action, 3]
+                    due_date = customers_data_after[action, 4]
+                    end_time = next_vehicle_data[vehicle_idx][3]
+                    # Estimate service start time using per-customer service time if available
+                    try:
+                        svc_time = float(env.service_times[action]) if hasattr(env, 'service_times') else 10.0
+                    except Exception:
+                        svc_time = 10.0
+                    start_time_at_customer = end_time - svc_time
+                    if start_time_at_customer < ready_time:
+                        early_count += 1
+                    elif start_time_at_customer > due_date:
+                        late_count += 1
+                # Capacity violation (should be rare; env handles capacity)
+                remaining_capacity = next_vehicle_data[vehicle_idx][2]
                 if remaining_capacity < 0:
                     capacity_count += 1
             
@@ -320,6 +337,19 @@ def save_evaluation_report(stats, num_episodes, total_customers):
         # Convert all numpy types to native Python types before JSON serialization
         json.dump(convert_numpy(stats), f, indent=2)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='Evaluate Improved Q-Learning VRP Agent')
+    parser.add_argument('--agent_path', type=str, default='checkpoints_qlearning_improved/best_agent.pkl')
+    parser.add_argument('--data_path', type=str, default='data/c101.txt')
+    parser.add_argument('--num_customers', type=int, default=100)
+    parser.add_argument('--num_vehicles', type=int, default=25)
+    parser.add_argument('--vehicle_capacity', type=float, default=200.0)
+    parser.add_argument('--penalty_early', type=float, default=0.3)
+    parser.add_argument('--penalty_late', type=float, default=0.5)
+    parser.add_argument('--num_episodes', type=int, default=50)
+    parser.add_argument('--max_speed', type=float, default=5.0)
+    return parser.parse_args()
+
 def main():
     """Main evaluation function"""
     # ANSI color codes for error messages
@@ -327,12 +357,23 @@ def main():
     C = '\033[0m'   # Reset
     
     try:
+        args = parse_args()
         # Create necessary directories
         os.makedirs('evaluation_plots', exist_ok=True)
         os.makedirs('evaluation_reports', exist_ok=True)
         
-        # Run evaluation
-        results = evaluate_improved_qlearning()
+        # Run evaluation with CLI args
+        results = evaluate_improved_qlearning(
+            agent_path=args.agent_path,
+            data_path=args.data_path,
+            num_customers=args.num_customers,
+            num_vehicles=args.num_vehicles,
+            vehicle_capacity=args.vehicle_capacity,
+            penalty_early=args.penalty_early,
+            penalty_late=args.penalty_late,
+            num_episodes=args.num_episodes,
+            max_speed=args.max_speed
+        )
         
         # Generate and save plots
         try:

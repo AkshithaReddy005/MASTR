@@ -415,7 +415,7 @@ class MVRPSTWEnv(gym.Env):
             penalty = 0.0
             
         # Service time
-        service_time = 10.0
+        service_time = float(self.service_times[customer_idx]) if hasattr(self, 'service_times') else 10.0
         
         # Update vehicle state
         self.vehicle_states[vehicle_idx, :2] = customer_loc  # Update location

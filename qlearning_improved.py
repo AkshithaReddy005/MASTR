@@ -98,15 +98,27 @@ class ImprovedQLearningAgent:
         vehicle_data = obs[8+env.num_customers*8:].reshape(env.num_vehicles, 4)
         current_vehicle = vehicle_data[env.current_vehicle]
         
-        valid_customers = []
+        unserved = []
+        feasible = []
+        current_pos = current_vehicle[:2]
+        current_time = current_vehicle[3]
         
         for i in range(env.num_customers):
             is_served = customers_data[i, -1] > 0.5
-            # Do not filter by capacity here; allow env to handle returns/switches
             if not is_served:
-                valid_customers.append(i)
+                unserved.append(i)
+                dest = customers_data[i, :2]
+                ready = customers_data[i, 3]
+                due = customers_data[i, 4]
+                dist = np.linalg.norm(current_pos - dest)
+                travel = dist / max(1e-6, env.max_speed)
+                start = current_time + travel
+                if start < ready:
+                    start = ready
+                if start <= due:
+                    feasible.append(i)
         
-        return valid_customers
+        return feasible if feasible else unserved
     
     def get_nearest_neighbor_action(self, obs, env, valid_customers):
         """Get nearest unvisited customer (heuristic baseline)"""
@@ -358,7 +370,9 @@ class ImprovedQLearningAgent:
         
         # If all Q-values are equal (early in training), use nearest neighbor
         if len(set(q for _, q in q_values)) == 1:
-            return self.get_nearest_neighbor_action(obs, env, valid_customers)
+            customers_data = obs[8:8+env.num_customers*8].reshape(env.num_customers, 8)
+            ordered = sorted(valid_customers, key=lambda i: customers_data[i, 4])
+            return ordered[0]
         
         # Select action with highest Q-value
         best_customer = max(q_values, key=lambda x: x[1])[0]
