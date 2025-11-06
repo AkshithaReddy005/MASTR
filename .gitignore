@@ -1,24 +1,4 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
+# .gitignore
 # Data files
 *.npy
 *.pkl
@@ -38,35 +18,12 @@ hyperparameter_results/
 *.jpeg
 *.pdf
 
-
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Logs and databases
-*.log
-*.sql
-*.sqlite
-
-# Local development
-.env
-.env.local
-
-# Checkpoints and outputs
-checkpoints/
-runs/
-results/
-
-# Data
-MASTR/data/raw/
-MASTR/data/processed/
-
-# OS specific
-.DS_Store
-Thumbs.db
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
