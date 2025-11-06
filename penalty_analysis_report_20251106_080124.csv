@@ -1,0 +1,7 @@
+Configuration,Early Penalty,Late Penalty,Capacity Penalty,Mean Reward,Mean Distance,Customers Served,Early Violations,Late Violations,Capacity Violations,Total Violations
+Baseline,50.0,100.0,200.0,-5149.87,274.08,12.00,0.00,9.00,0.00,9.00
+Low Penalties,25.0,50.0,100.0,-4102.44,321.10,14.00,0.00,11.00,0.00,11.00
+High Penalties,100.0,200.0,400.0,-9128.57,201.37,11.00,0.00,9.00,0.00,9.00
+Strict Time Windows,150.0,300.0,200.0,-13615.43,274.24,12.00,0.00,8.00,0.00,8.00
+Strict Capacity,50.0,100.0,500.0,-5149.87,274.08,12.00,0.00,9.00,0.00,9.00
+Distance Priority,30.0,60.0,150.0,-3678.85,202.81,10.00,0.00,9.00,0.00,9.00
