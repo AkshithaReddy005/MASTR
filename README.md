@@ -213,7 +213,7 @@ flowchart LR
 ### Sample Visualizations
 
 #### 1. Route Visualization
-![Route Visualization]([evaluation_plots\episode_1_routes.png](https://github.com/AkshithaReddy005/MASTR/blob/main/evaluation_plots/episode_1_routes.png))
+![Route Visualization](evaluation_plots/episode_1_routes.png)
 
 #### 2. Penalty Analysis
 ![Penalty Analysis](penalty_analysis_20251106_080124.png)
