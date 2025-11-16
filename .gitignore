@@ -8,7 +8,7 @@
 
 # Logs and outputs
 checkpoints_*/
-evaluation_plots/
+!evaluation_plots/
 evaluation_reports/
 hyperparameter_results/
 
