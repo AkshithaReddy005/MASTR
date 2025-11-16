@@ -28,3 +28,5 @@ __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/
 !flow_charts/**
+# Allow specific plot files in evaluation_plots
+!evaluation_plots/*.png
