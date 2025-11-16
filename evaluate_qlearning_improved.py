@@ -214,12 +214,32 @@ def evaluate_improved_qlearning(
             
             # Plot customers
             try:
-                customers = env.customers
-                plt.scatter(customers[:, 0], customers[:, 1], c='blue', label='Customers')
+                # Prefer direct access if available
+                customer_positions = env.customer_locations
+                visited_mask = getattr(env, 'visited', None)
             except AttributeError:
-                # Fallback: Extract customer positions from observation
+                customer_positions = None
+                visited_mask = None
+
+            if customer_positions is None:
+                # Fallback: Extract positions from observation
                 customer_data = obs[8:8+env.num_customers*8].reshape(env.num_customers, 8)
-                plt.scatter(customer_data[:, 0], customer_data[:, 1], c='blue', label='Customers')
+                customer_positions = customer_data[:, :2]
+                if visited_mask is None:
+                    visited_mask = customer_data[:, -1] > 0.5
+
+            # Plot served vs unserved for clarity
+            if visited_mask is not None:
+                served_idx = np.where(visited_mask)[0]
+                unserved_idx = np.where(~visited_mask)[0]
+                if len(unserved_idx) > 0:
+                    plt.scatter(customer_positions[unserved_idx, 0], customer_positions[unserved_idx, 1],
+                                c='blue', label='Unserved')
+                if len(served_idx) > 0:
+                    plt.scatter(customer_positions[served_idx, 0], customer_positions[served_idx, 1],
+                                c='green', label='Served')
+            else:
+                plt.scatter(customer_positions[:, 0], customer_positions[:, 1], c='blue', label='Customers')
             
             # Plot routes
             colors = ['green', 'purple', 'orange', 'brown', 'pink']

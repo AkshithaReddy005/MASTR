@@ -33,8 +33,8 @@ def plot_routes(env=None, model_path=None):
     # Plot routes
     plt.figure(figsize=(12, 8))
     
-    # Plot depot (first customer is typically the depot in VRP)
-    depot = env.customer_locations[0]
+    # Plot depot (use env.depot_loc; customer_locations exclude depot)
+    depot = env.depot_loc
     plt.scatter([depot[0]], [depot[1]], c='red', s=200, marker='s', label='Depot')
     
     # Plot customers
@@ -46,7 +46,8 @@ def plot_routes(env=None, model_path=None):
     colors = ['green', 'purple', 'orange', 'brown', 'pink']
     for v in range(env.num_vehicles):
         if v < len(env.routes) and len(env.routes[v]) > 0:
-            route = [depot] + [env.customer_locations[i+1] for i in env.routes[v]] + [depot]
+            # env.routes[v] contains indices into env.customer_locations directly (no +1)
+            route = [depot] + [env.customer_locations[i] for i in env.routes[v]] + [depot]
             route = np.array(route)
             plt.plot(route[:, 0], route[:, 1], 'o-', color=colors[v % len(colors)], 
                     linewidth=2, markersize=6, label=f'Vehicle {v+1}')
